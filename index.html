@@ -364,6 +364,13 @@
     });
   }
 
+  function scrollToStep(id){
+    setTimeout(() => {
+      const el = $(id);
+      if(el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 80);
+  }
+
   function encode(obj){
     return btoa(unescape(encodeURIComponent(JSON.stringify(obj))));
   }
@@ -454,6 +461,7 @@
       if(conn.connectionState === "connected"){
         setStatus("connected", "接続完了 — <b>P2Pで直接つながっています</b>");
         showOnly(["chatCard"]);
+        scrollToStep("chatCard");
         addSysMsg("接続が確立しました");
       } else if(["disconnected","failed","closed"].includes(conn.connectionState)){
         setStatus("", "接続が切断されました");
@@ -492,10 +500,12 @@
   $("roleHost").onclick = () => {
     setStatus("pending", "招待コードを作成してください");
     showOnly(["hostStep1"]);
+    scrollToStep("hostStep1");
   };
   $("roleJoin").onclick = () => {
     setStatus("pending", "招待コードを貼り付けてください");
     showOnly(["joinStep1"]);
+    scrollToStep("joinStep1");
   };
 
   // HOST: generate offer
@@ -516,6 +526,7 @@
     $("hostCopyBtn").disabled = false;
     $("hostGenHint").textContent = "上のコードをコピーして相手に送ってください。";
     showOnly(["hostStep1","hostStep2"]);
+    scrollToStep("hostStep2");
   };
   function copyText(text, btn){
     const done = () => {
@@ -586,6 +597,7 @@
       $("joinAnswerOut").value = encode(pc.localDescription);
       setStatus("pending", "応答コードを相手に送ってください");
       showOnly(["joinStep2"]);
+      scrollToStep("joinStep2");
     }catch(e){
       dlog("応答コード作成エラー: " + e.message);
       $("joinGenHint").textContent = "コードが正しくないようです。もう一度確認してください。";
