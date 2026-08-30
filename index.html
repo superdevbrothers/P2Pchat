@@ -312,7 +312,7 @@
 
   <footer>
     通常はブラウザ間で直接メッセージを送受信し、どこにも保存されません。<br>
-    ただし直接経路が確立できない回線環境では、中継用のTURNサーバー(openrelay.metered.ca、無料の第三者サービス)を自動的に経由することがあります。その場合メッセージはこの中継サーバーを通過します(保存はされません)。
+    ただし直接経路が確立できない回線環境では、中継用のTURNサーバー(ExpressTURN、無料の第三者サービス)を自動的に経由することがあります。その場合メッセージはこの中継サーバーを通過します(保存はされません)。
     <div style="margin-top:12px;"><button class="reset-link" id="resetBtn">最初からやり直す</button></div>
     <div style="margin-top:6px;"><button class="reset-link" id="debugToggle">デバッグ情報を表示</button></div>
   </footer>
@@ -326,29 +326,14 @@
 
 <script>
 (function(){
-  const TURN_API_URL = "https://p2pline.metered.live/api/v1/turn/credentials?apiKey=sk_id_ea2b48055549836caacab75f1c3da6ad";
-  const STUN_FALLBACK = [
+  const ICE_SERVERS = [
     { urls: "stun:stun.l.google.com:19302" },
-    { urls: "stun:stun.cloudflare.com:3478" }
+    { urls: "stun:stun.cloudflare.com:3478" },
+    { urls: "turn:free.expressturn.com:3478", username: "000000002103456670", credential: "M1daW2E7ULq7chRrtEDSmCFlyQ8=" },
+    { urls: "turn:free.expressturn.com:3478?transport=tcp", username: "000000002103456670", credential: "M1daW2E7ULq7chRrtEDSmCFlyQ8=" }
   ];
-  let cachedIceServers = null;
-
   async function getIceServers(){
-    if(cachedIceServers) return cachedIceServers;
-    try{
-      dlog("TURN認証情報をmetered.liveから取得中…");
-      const res = await fetch(TURN_API_URL);
-      if(!res.ok) throw new Error("HTTP " + res.status);
-      const servers = await res.json();
-      if(!Array.isArray(servers) || servers.length === 0) throw new Error("空のレスポンス");
-      dlog("TURN認証情報を取得しました(" + servers.length + "件のサーバー)");
-      cachedIceServers = servers;
-      return servers;
-    }catch(e){
-      dlog("⚠ TURN認証情報の取得に失敗: " + e.message + " — STUNのみで続行します(直接経路がダメだと繋がりません)");
-      cachedIceServers = STUN_FALLBACK;
-      return STUN_FALLBACK;
-    }
+    return ICE_SERVERS;
   }
 
   let pc = null;
