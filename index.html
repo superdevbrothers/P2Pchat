@@ -326,13 +326,30 @@
 
 <script>
 (function(){
-  const ICE_SERVERS = [
+  const TURN_API_URL = "https://p2pline.metered.live/api/v1/turn/credentials?apiKey=sk_id_ea2b48055549836caacab75f1c3da6ad";
+  const STUN_FALLBACK = [
     { urls: "stun:stun.l.google.com:19302" },
-    { urls: "stun:stun.cloudflare.com:3478" },
-    { urls: "turn:openrelay.metered.ca:80", username: "openrelayproject", credential: "openrelayproject" },
-    { urls: "turn:openrelay.metered.ca:443", username: "openrelayproject", credential: "openrelayproject" },
-    { urls: "turn:openrelay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" }
+    { urls: "stun:stun.cloudflare.com:3478" }
   ];
+  let cachedIceServers = null;
+
+  async function getIceServers(){
+    if(cachedIceServers) return cachedIceServers;
+    try{
+      dlog("TURN認証情報をmetered.liveから取得中…");
+      const res = await fetch(TURN_API_URL);
+      if(!res.ok) throw new Error("HTTP " + res.status);
+      const servers = await res.json();
+      if(!Array.isArray(servers) || servers.length === 0) throw new Error("空のレスポンス");
+      dlog("TURN認証情報を取得しました(" + servers.length + "件のサーバー)");
+      cachedIceServers = servers;
+      return servers;
+    }catch(e){
+      dlog("⚠ TURN認証情報の取得に失敗: " + e.message + " — STUNのみで続行します(直接経路がダメだと繋がりません)");
+      cachedIceServers = STUN_FALLBACK;
+      return STUN_FALLBACK;
+    }
+  }
 
   let pc = null;
   let dc = null;
@@ -382,7 +399,7 @@
   }
 
   function waitIceComplete(pc, maxWaitMs){
-    maxWaitMs = maxWaitMs || 5000;
+    maxWaitMs = maxWaitMs || 8000;
     return new Promise(resolve=>{
       if(pc.iceGatheringState === "complete"){
         dlog("iceGatheringState が自然に complete になりました");
@@ -420,8 +437,8 @@
       " / conn=" + conn.connectionState;
   }
 
-  function makePC(){
-    const conn = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+  function makePC(iceServers){
+    const conn = new RTCPeerConnection({ iceServers: iceServers });
     dlog("RTCPeerConnection 作成");
 
     let candCount = 0;
@@ -526,9 +543,10 @@
   // HOST: generate offer
   $("hostGenBtn").onclick = async () => {
     $("hostGenBtn").disabled = true;
-    $("hostGenHint").textContent = "接続情報を集めています(最大5秒)…";
+    $("hostGenHint").textContent = "接続情報を集めています(最大8秒)…";
     dlog("招待コード作成 開始");
-    pc = makePC();
+    const iceServers = await getIceServers();
+    pc = makePC(iceServers);
     const channel = pc.createDataChannel("chat");
     setupDataChannel(channel);
     const offer = await pc.createOffer();
@@ -599,7 +617,7 @@
         $("joinGenBtn").disabled = false;
         return;
       }
-      pc = makePC();
+      pc = makePC(await getIceServers());
       pc.ondatachannel = (e) => { dlog("データチャネル受信"); setupDataChannel(e.channel); };
       await pc.setRemoteDescription(offer);
       dlog("リモートSDP(offer)設定完了。");
