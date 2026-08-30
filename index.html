@@ -311,8 +311,8 @@
   </div>
 
   <footer>
-    メッセージはブラウザ間で直接送受信され、どこにも保存・中継されません。<br>
-    接続確立の最初の一瞬だけ、NAT越えのためにSTUNサーバー(住所交換のみ・内容不通過)を使用します。
+    通常はブラウザ間で直接メッセージを送受信し、どこにも保存されません。<br>
+    ただし直接経路が確立できない回線環境では、中継用のTURNサーバー(openrelay.metered.ca、無料の第三者サービス)を自動的に経由することがあります。その場合メッセージはこの中継サーバーを通過します(保存はされません)。
     <div style="margin-top:12px;"><button class="reset-link" id="resetBtn">最初からやり直す</button></div>
     <div style="margin-top:6px;"><button class="reset-link" id="debugToggle">デバッグ情報を表示</button></div>
   </footer>
@@ -328,7 +328,10 @@
 (function(){
   const ICE_SERVERS = [
     { urls: "stun:stun.l.google.com:19302" },
-    { urls: "stun:stun.cloudflare.com:3478" }
+    { urls: "stun:stun.cloudflare.com:3478" },
+    { urls: "turn:openrelay.metered.ca:80", username: "openrelayproject", credential: "openrelayproject" },
+    { urls: "turn:openrelay.metered.ca:443", username: "openrelayproject", credential: "openrelayproject" },
+    { urls: "turn:openrelay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" }
   ];
 
   let pc = null;
@@ -463,6 +466,18 @@
         showOnly(["chatCard"]);
         scrollToStep("chatCard");
         addSysMsg("接続が確立しました");
+        conn.getStats().then(stats => {
+          let localType = "?", remoteType = "?";
+          stats.forEach(r => {
+            if(r.type === "candidate-pair" && r.state === "succeeded" && r.nominated){
+              const local = stats.get(r.localCandidateId);
+              const remote = stats.get(r.remoteCandidateId);
+              if(local) localType = local.candidateType;
+              if(remote) remoteType = remote.candidateType;
+            }
+          });
+          dlog("採用された経路: local=" + localType + " / remote=" + remoteType + (localType === "relay" || remoteType === "relay" ? "(TURN中継経由)" : "(直接P2P)"));
+        }).catch(()=>{});
       } else if(["disconnected","failed","closed"].includes(conn.connectionState)){
         setStatus("", "接続が切断されました");
       }
