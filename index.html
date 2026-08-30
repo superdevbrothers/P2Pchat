@@ -232,6 +232,7 @@
     <div class="node peer"></div>
   </div>
   <div class="status-label" id="statusLabel">未接続 — 下の手順で接続を開始してください</div>
+  <div class="status-label" id="liveState" style="margin-top:-14px;opacity:.7;">&nbsp;</div>
 
   <!-- ROLE SELECT -->
   <div class="card" id="roleCard">
@@ -373,33 +374,66 @@
   function waitIceComplete(pc, maxWaitMs){
     maxWaitMs = maxWaitMs || 5000;
     return new Promise(resolve=>{
-      if(pc.iceGatheringState === "complete"){ resolve(); return; }
+      if(pc.iceGatheringState === "complete"){
+        dlog("iceGatheringState が自然に complete になりました");
+        resolve();
+        return;
+      }
       let done = false;
-      const finish = () => {
+      const finish = (viaTimeout) => {
         if(done) return;
         done = true;
         pc.removeEventListener("icegatheringstatechange", check);
+        if(viaTimeout){
+          dlog("⏱ " + (maxWaitMs/1000) + "秒のタイムアウトで打ち切り(iceGatheringState=" + pc.iceGatheringState + " のまま完了しませんでした)");
+        }
         resolve();
       };
       function check(){
-        if(pc.iceGatheringState === "complete") finish();
+        if(pc.iceGatheringState === "complete"){
+          dlog("iceGatheringState が自然に complete になりました");
+          finish(false);
+        }
       }
       pc.addEventListener("icegatheringstatechange", check);
-      setTimeout(finish, maxWaitMs);
+      setTimeout(() => finish(true), maxWaitMs);
     });
+  }
+
+  function updateLiveState(conn){
+    const el = $("liveState");
+    if(!el) return;
+    el.textContent =
+      "signaling=" + conn.signalingState +
+      " / gathering=" + conn.iceGatheringState +
+      " / ice=" + conn.iceConnectionState +
+      " / conn=" + conn.connectionState;
   }
 
   function makePC(){
     const conn = new RTCPeerConnection({ iceServers: ICE_SERVERS });
     dlog("RTCPeerConnection 作成");
 
-    conn.onsignalingstatechange = () => dlog("signalingState: " + conn.signalingState);
-    conn.onicegatheringstatechange = () => dlog("iceGatheringState: " + conn.iceGatheringState);
-    conn.onicecandidateerror = (e) => dlog("ICE candidate error: " + (e.errorText || e.errorCode || "unknown"));
+    let candCount = 0;
+    conn.onicecandidate = (e) => {
+      if(e.candidate){
+        candCount++;
+        const c = e.candidate;
+        dlog("候補#" + candCount + " 取得: type=" + c.type + " protocol=" + c.protocol + " address=" + (c.address || "?") + " port=" + (c.port || "?"));
+      } else {
+        dlog("候補収集イベント: null candidate受信(このネットワークインターフェースの収集終了)");
+      }
+      updateLiveState(conn);
+    };
+
+    conn.onsignalingstatechange = () => { dlog("signalingState: " + conn.signalingState); updateLiveState(conn); };
+    conn.onicegatheringstatechange = () => { dlog("iceGatheringState: " + conn.iceGatheringState); updateLiveState(conn); };
+    conn.onicecandidateerror = (e) => dlog("ICE candidate error: " + (e.errorText || e.errorCode || "unknown") + (e.url ? " (" + e.url + ")" : ""));
 
     let stuckTimer = null;
     conn.oniceconnectionstatechange = () => {
       dlog("iceConnectionState: " + conn.iceConnectionState);
+      updateLiveState(conn);
       if(conn.iceConnectionState === "checking"){
         clearTimeout(stuckTimer);
         stuckTimer = setTimeout(() => {
@@ -416,6 +450,7 @@
 
     conn.onconnectionstatechange = () => {
       dlog("connectionState: " + conn.connectionState);
+      updateLiveState(conn);
       if(conn.connectionState === "connected"){
         setStatus("connected", "接続完了 — <b>P2Pで直接つながっています</b>");
         showOnly(["chatCard"]);
@@ -429,7 +464,10 @@
 
   function setupDataChannel(channel){
     dc = channel;
-    dc.onopen = () => { setStatus("connected", "接続完了 — <b>P2Pで直接つながっています</b>"); };
+    dlog("データチャネル設定: readyState=" + channel.readyState);
+    dc.onopen = () => { dlog("データチャネル open"); setStatus("connected", "接続完了 — <b>P2Pで直接つながっています</b>"); };
+    dc.onclose = () => dlog("データチャネル closed");
+    dc.onerror = (e) => dlog("データチャネル error: " + (e.message || JSON.stringify(e)));
     dc.onmessage = (e) => addMsg(e.data, "peer");
   }
 
@@ -507,6 +545,11 @@
     try{
       const answer = decode(val);
       dlog("応答コードを解析しました。type=" + answer.type);
+      if(answer.type !== "answer"){
+        dlog("⚠ 貼り付けられたのは type=" + answer.type + " です。応答コード(answer)ではありません。");
+        $("hostConnectHint").textContent = "これは招待コード(自分が作ったもの)のようです。相手が「応答コードを作成」で生成した、別のコードを貼り付けてください。";
+        return;
+      }
       await pc.setRemoteDescription(answer);
       dlog("リモートSDP(answer)設定完了。ICE接続確立を待ちます。");
       $("hostConnectHint").textContent = "接続を確立しています…";
@@ -524,6 +567,12 @@
     try{
       const offer = decode(val);
       dlog("招待コードを解析しました。type=" + offer.type);
+      if(offer.type !== "offer"){
+        dlog("⚠ 貼り付けられたのは type=" + offer.type + " です。招待コード(offer)ではありません。");
+        $("joinGenHint").textContent = "これは招待コードではないようです。相手が「招待コードを作成」で生成したコードを貼り付けてください。";
+        $("joinGenBtn").disabled = false;
+        return;
+      }
       pc = makePC();
       pc.ondatachannel = (e) => { dlog("データチャネル受信"); setupDataChannel(e.channel); };
       await pc.setRemoteDescription(offer);
@@ -564,6 +613,7 @@
     ["hostOfferOut","hostAnswerIn","joinOfferIn","joinAnswerOut","msgInput"].forEach(id=>{ $(id).value=""; });
     $("chatLog").innerHTML = "";
     $("debugLog").value = "";
+    $("liveState").textContent = "\u00A0";
     $("hostCopyBtn").disabled = true;
     $("hostGenBtn").disabled = false;
     $("joinGenBtn").disabled = false;
