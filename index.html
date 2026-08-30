@@ -313,7 +313,14 @@
     メッセージはブラウザ間で直接送受信され、どこにも保存・中継されません。<br>
     接続確立の最初の一瞬だけ、NAT越えのためにSTUNサーバー(住所交換のみ・内容不通過)を使用します。
     <div style="margin-top:12px;"><button class="reset-link" id="resetBtn">最初からやり直す</button></div>
+    <div style="margin-top:6px;"><button class="reset-link" id="debugToggle">デバッグ情報を表示</button></div>
   </footer>
+
+  <div class="card" id="debugCard" style="display:none;">
+    <div class="step-title" style="font-size:12.5px;">DEBUG LOG</div>
+    <textarea id="debugLog" readonly style="min-height:160px;font-size:10.5px;"></textarea>
+    <div class="hint">signalingState / iceConnectionState / iceGatheringState / connectionState の変化を記録します。うまく繋がらない時はここをコピーして状況を確認してください。</div>
+  </div>
 </div>
 
 <script>
@@ -329,6 +336,20 @@
   const $ = id => document.getElementById(id);
   const linkViz = $("linkViz");
   const statusLabel = $("statusLabel");
+
+  function dlog(msg){
+    const ta = $("debugLog");
+    const t = new Date().toLocaleTimeString();
+    ta.value += "[" + t + "] " + msg + "\n";
+    ta.scrollTop = ta.scrollHeight;
+    console.log("[p2p-chat]", msg);
+  }
+  $("debugToggle").onclick = () => {
+    const card = $("debugCard");
+    const showing = card.style.display !== "none";
+    card.style.display = showing ? "none" : "";
+    $("debugToggle").textContent = showing ? "デバッグ情報を表示" : "デバッグ情報を隠す";
+  };
 
   function setStatus(mode, text){
     linkViz.className = "link-viz " + mode;
@@ -370,7 +391,31 @@
 
   function makePC(){
     const conn = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+    dlog("RTCPeerConnection 作成");
+
+    conn.onsignalingstatechange = () => dlog("signalingState: " + conn.signalingState);
+    conn.onicegatheringstatechange = () => dlog("iceGatheringState: " + conn.iceGatheringState);
+    conn.onicecandidateerror = (e) => dlog("ICE candidate error: " + (e.errorText || e.errorCode || "unknown"));
+
+    let stuckTimer = null;
+    conn.oniceconnectionstatechange = () => {
+      dlog("iceConnectionState: " + conn.iceConnectionState);
+      if(conn.iceConnectionState === "checking"){
+        clearTimeout(stuckTimer);
+        stuckTimer = setTimeout(() => {
+          if(["checking","new"].includes(conn.iceConnectionState)){
+            dlog("⚠ 12秒経っても checking のまま — 相手に到達できていません。対称型NAT/回線のUDPブロックの可能性があり、その場合STUNだけでは接続できずTURNサーバーが必要です。");
+            const hint = $("hostConnectHint").textContent !== "" ? $("hostConnectHint") : $("joinGenHint");
+            hint.textContent = "接続が確立できません。ネットワークがUDP通信をブロックしている可能性があります(デバッグ情報を参照)。別のWi-Fi/回線で試すか、TURNサーバーの追加が必要です。";
+          }
+        }, 12000);
+      } else if(["connected","completed","failed","closed"].includes(conn.iceConnectionState)){
+        clearTimeout(stuckTimer);
+      }
+    };
+
     conn.onconnectionstatechange = () => {
+      dlog("connectionState: " + conn.connectionState);
       if(conn.connectionState === "connected"){
         setStatus("connected", "接続完了 — <b>P2Pで直接つながっています</b>");
         showOnly(["chatCard"]);
@@ -419,12 +464,16 @@
   $("hostGenBtn").onclick = async () => {
     $("hostGenBtn").disabled = true;
     $("hostGenHint").textContent = "接続情報を集めています(最大5秒)…";
+    dlog("招待コード作成 開始");
     pc = makePC();
     const channel = pc.createDataChannel("chat");
     setupDataChannel(channel);
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
+    dlog("ローカルSDP(offer)設定完了。ICE収集を待機します。");
     await waitIceComplete(pc);
+    const types = (pc.localDescription.sdp.match(/typ \w+/g) || []);
+    dlog("ICE収集終了(iceGatheringState=" + pc.iceGatheringState + ")。候補種別: " + (types.length ? types.join(", ") : "なし(要注意)"));
     $("hostOfferOut").value = encode(pc.localDescription);
     $("hostCopyBtn").disabled = false;
     $("hostGenHint").textContent = "上のコードをコピーして相手に送ってください。";
@@ -457,9 +506,12 @@
     if(!val.trim()){ $("hostConnectHint").textContent = "応答コードを貼り付けてください。"; return; }
     try{
       const answer = decode(val);
+      dlog("応答コードを解析しました。type=" + answer.type);
       await pc.setRemoteDescription(answer);
+      dlog("リモートSDP(answer)設定完了。ICE接続確立を待ちます。");
       $("hostConnectHint").textContent = "接続を確立しています…";
     }catch(e){
+      dlog("setRemoteDescription エラー: " + e.message);
       $("hostConnectHint").textContent = "コードが正しくないようです。もう一度確認してください。";
     }
   };
@@ -471,16 +523,22 @@
     $("joinGenBtn").disabled = true;
     try{
       const offer = decode(val);
+      dlog("招待コードを解析しました。type=" + offer.type);
       pc = makePC();
-      pc.ondatachannel = (e) => setupDataChannel(e.channel);
+      pc.ondatachannel = (e) => { dlog("データチャネル受信"); setupDataChannel(e.channel); };
       await pc.setRemoteDescription(offer);
+      dlog("リモートSDP(offer)設定完了。");
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
+      dlog("ローカルSDP(answer)設定完了。ICE収集を待機します。");
       await waitIceComplete(pc);
+      const types = (pc.localDescription.sdp.match(/typ \w+/g) || []);
+      dlog("ICE収集終了(iceGatheringState=" + pc.iceGatheringState + ")。候補種別: " + (types.length ? types.join(", ") : "なし(要注意)"));
       $("joinAnswerOut").value = encode(pc.localDescription);
       setStatus("pending", "応答コードを相手に送ってください");
       showOnly(["joinStep2"]);
     }catch(e){
+      dlog("応答コード作成エラー: " + e.message);
       $("joinGenHint").textContent = "コードが正しくないようです。もう一度確認してください。";
       $("joinGenBtn").disabled = false;
     }
@@ -505,6 +563,7 @@
     dc = null;
     ["hostOfferOut","hostAnswerIn","joinOfferIn","joinAnswerOut","msgInput"].forEach(id=>{ $(id).value=""; });
     $("chatLog").innerHTML = "";
+    $("debugLog").value = "";
     $("hostCopyBtn").disabled = true;
     $("hostGenBtn").disabled = false;
     $("joinGenBtn").disabled = false;
