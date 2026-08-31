@@ -208,6 +208,54 @@
   }
   .chat-input input:focus{outline:none;border-color:var(--signal);}
 
+  .icon-btn{
+    background:var(--panel-2);border:1px solid var(--line);border-radius:8px;
+    color:var(--text);width:38px;height:38px;flex-shrink:0;
+    display:flex;align-items:center;justify-content:center;
+    cursor:pointer;font-size:16px;transition:border-color .15s, background .15s;
+  }
+  .icon-btn:hover{border-color:var(--text-dim);}
+  .icon-btn.active{background:var(--signal);border-color:var(--signal);color:#052018;}
+  .icon-btn.rec{background:var(--danger);border-color:var(--danger);color:#fff;animation:pulse 1.2s ease-in-out infinite;}
+  .icon-btn:disabled{opacity:.3;cursor:not-allowed;}
+  @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.55;}}
+
+  .call-btn{
+    font-family:var(--mono);font-size:11px;
+    background:var(--panel-2);border:1px solid var(--line);border-radius:6px;
+    color:var(--text-dim);padding:5px 10px;cursor:pointer;
+  }
+  .call-btn:hover{border-color:var(--text-dim);}
+  .call-btn.active{background:var(--danger);border-color:var(--danger);color:#fff;}
+  .call-bar{
+    display:none;align-items:center;justify-content:space-between;gap:8px;
+    padding:8px 16px;background:var(--pending-dim);border-bottom:1px solid var(--line);
+    font-family:var(--mono);font-size:11px;color:var(--pending);
+  }
+  .call-bar.show{display:flex;}
+  .call-bar .mute-btn{
+    background:none;border:1px solid var(--pending);color:var(--pending);
+    border-radius:6px;padding:3px 9px;cursor:pointer;font-family:var(--sans);font-size:11px;
+  }
+
+  .msg.file{
+    background:var(--panel-2);border:1px solid var(--line);
+    align-self:flex-start;padding:10px 12px;min-width:180px;
+  }
+  .msg.file.me{align-self:flex-end;}
+  .file-row{display:flex;align-items:center;gap:8px;}
+  .file-icon{font-size:20px;flex-shrink:0;}
+  .file-info{flex:1;min-width:0;}
+  .file-name{font-size:12.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .file-meta{font-size:10.5px;color:var(--text-dim);font-family:var(--mono);margin-top:2px;}
+  .file-bar{height:3px;background:var(--line);border-radius:2px;margin-top:6px;overflow:hidden;}
+  .file-bar-fill{height:100%;background:var(--signal);width:0%;transition:width .15s;}
+  .file-link{
+    display:inline-block;margin-top:8px;font-size:12px;color:var(--signal);
+    text-decoration:none;border:1px solid var(--signal-dim);border-radius:6px;padding:4px 10px;
+  }
+  .file-img{max-width:220px;border-radius:8px;margin-top:8px;display:block;}
+
   footer{
     text-align:center;margin-top:26px;font-size:11.5px;color:var(--text-dim);line-height:1.7;
   }
@@ -301,18 +349,33 @@
   <div class="card chat-card" id="chatCard" style="display:none;">
     <div class="chat-head">
       <span class="who"><span class="dot"></span>相手と接続中</span>
-      <span style="font-family:var(--mono);font-size:11px;color:var(--text-dim);">P2P直結</span>
+      <span style="display:flex;align-items:center;gap:10px;">
+        <button class="call-btn" id="callBtn">📞 通話開始</button>
+        <span style="font-family:var(--mono);font-size:11px;color:var(--text-dim);">P2P直結</span>
+      </span>
+    </div>
+    <div class="call-bar" id="callBar">
+      <span id="callStatus">通話中…</span>
+      <span style="display:flex;gap:8px;">
+        <button class="mute-btn" id="muteBtn">ミュート</button>
+        <button class="mute-btn" id="hangupBtn">切断</button>
+      </span>
     </div>
     <div class="chat-log" id="chatLog"></div>
     <div class="chat-input">
+      <input type="file" id="fileInput" style="display:none">
+      <button class="icon-btn" id="fileBtn" title="ファイルを送る">📎</button>
+      <button class="icon-btn" id="micBtn" title="音声入力">🎤</button>
       <input type="text" id="msgInput" placeholder="メッセージを入力…" maxlength="1000">
       <button class="btn primary" id="sendBtn">送信</button>
     </div>
+    <audio id="remoteAudio" autoplay></audio>
   </div>
 
   <footer>
-    通常はブラウザ間で直接メッセージを送受信し、どこにも保存されません。<br>
-    ただし直接経路が確立できない回線環境では、中継用のTURNサーバー(ExpressTURN、無料の第三者サービス)を自動的に経由することがあります。その場合メッセージはこの中継サーバーを通過します(保存はされません)。
+    通常はブラウザ間で直接メッセージ・ファイル・音声を送受信し、どこにも保存されません。<br>
+    ただし直接経路が確立できない回線環境では、中継用のTURNサーバー(ExpressTURN、無料の第三者サービス)を自動的に経由することがあります。その場合、チャット内容や音声通話・送信ファイルもこの中継サーバーを通過します(保存はされません)。<br>
+    音声通話にはマイクへのアクセス許可が、音声入力にはブラウザの音声認識機能(対応ブラウザのみ)が必要です。
     <div style="margin-top:12px;"><button class="reset-link" id="resetBtn">最初からやり直す</button></div>
     <div style="margin-top:6px;"><button class="reset-link" id="debugToggle">デバッグ情報を表示</button></div>
   </footer>
@@ -442,6 +505,23 @@
     conn.onicegatheringstatechange = () => { dlog("iceGatheringState: " + conn.iceGatheringState); updateLiveState(conn); };
     conn.onicecandidateerror = (e) => dlog("ICE candidate error: " + (e.errorText || e.errorCode || "unknown") + (e.url ? " (" + e.url + ")" : ""));
 
+    conn.ontrack = (e) => {
+      dlog("リモート音声トラック受信");
+      const audioEl = $("remoteAudio");
+      if(audioEl && e.streams && e.streams[0]) audioEl.srcObject = e.streams[0];
+    };
+
+    conn.onnegotiationneeded = async () => {
+      try{
+        dlog("再ネゴシエーション開始(通話用)");
+        const offer = await conn.createOffer();
+        await conn.setLocalDescription(offer);
+        sendControl({ k: "rtc-offer", sdp: conn.localDescription });
+      }catch(e){
+        dlog("再ネゴシエーション エラー: " + e.message);
+      }
+    };
+
     let stuckTimer = null;
     conn.oniceconnectionstatechange = () => {
       dlog("iceConnectionState: " + conn.iceConnectionState);
@@ -489,11 +569,65 @@
 
   function setupDataChannel(channel){
     dc = channel;
+    dc.binaryType = "arraybuffer";
     dlog("データチャネル設定: readyState=" + channel.readyState);
     dc.onopen = () => { dlog("データチャネル open"); setStatus("connected", "接続完了 — <b>P2Pで直接つながっています</b>"); };
     dc.onclose = () => dlog("データチャネル closed");
     dc.onerror = (e) => dlog("データチャネル error: " + (e.message || JSON.stringify(e)));
-    dc.onmessage = (e) => addMsg(e.data, "peer");
+    dc.onmessage = (e) => {
+      if(typeof e.data === "string"){
+        let msg;
+        try{ msg = JSON.parse(e.data); }catch(err){ addMsg(e.data, "peer"); return; }
+        handleControlMessage(msg);
+      } else {
+        handleIncomingChunk(e.data);
+      }
+    };
+  }
+
+  function sendControl(obj){
+    if(dc && dc.readyState === "open") dc.send(JSON.stringify(obj));
+  }
+
+  async function handleControlMessage(msg){
+    if(msg.k === "msg"){
+      addMsg(msg.text, "peer");
+    } else if(msg.k === "file-start"){
+      beginIncomingFile(msg);
+    } else if(msg.k === "file-end"){
+      finishIncomingFile(msg.id);
+    } else if(msg.k === "rtc-offer"){
+      dlog("通話オファー受信");
+      try{
+        await pc.setRemoteDescription(msg.sdp);
+        if(!localAudioStream){
+          try{
+            localAudioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            localAudioStream.getTracks().forEach(t => pc.addTrack(t, localAudioStream));
+            dlog("マイクを取得し発信側に追加(応答)");
+          }catch(err){
+            dlog("マイク取得失敗(受信のみで応答): " + err.message);
+          }
+        }
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        sendControl({ k: "rtc-answer", sdp: pc.localDescription });
+        showCallBar(true);
+      }catch(err){
+        dlog("通話オファー処理エラー: " + err.message);
+      }
+    } else if(msg.k === "rtc-answer"){
+      dlog("通話アンサー受信");
+      try{
+        await pc.setRemoteDescription(msg.sdp);
+        showCallBar(true);
+      }catch(err){
+        dlog("通話アンサー処理エラー: " + err.message);
+      }
+    } else if(msg.k === "call-end"){
+      dlog("相手が通話を終了しました");
+      endCall(false);
+    }
   }
 
   function addMsg(text, who){
@@ -512,6 +646,131 @@
     log.appendChild(div);
     log.scrollTop = log.scrollHeight;
   }
+
+  // ---- file transfer ----
+  const CHUNK_SIZE = 16 * 1024;
+  const BUFFERED_AMOUNT_LOW = 256 * 1024;
+  const BUFFERED_AMOUNT_HIGH = 2 * 1024 * 1024;
+  const incomingFiles = {};
+  let fileSendQueue = Promise.resolve();
+
+  function humanSize(bytes){
+    if(bytes < 1024) return bytes + " B";
+    if(bytes < 1024*1024) return (bytes/1024).toFixed(1) + " KB";
+    return (bytes/1024/1024).toFixed(1) + " MB";
+  }
+
+  function addFileMsg(id, name, size, who){
+    const log = $("chatLog");
+    const div = document.createElement("div");
+    div.className = "msg file " + who;
+    div.id = "file-" + id;
+    div.innerHTML =
+      '<div class="file-row">' +
+        '<div class="file-icon">📄</div>' +
+        '<div class="file-info">' +
+          '<div class="file-name">' + name.replace(/</g,"&lt;") + '</div>' +
+          '<div class="file-meta" data-role="meta">' + humanSize(size) + ' · 0%</div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="file-bar"><div class="file-bar-fill" data-role="bar"></div></div>' +
+      '<div data-role="extra"></div>';
+    log.appendChild(div);
+    log.scrollTop = log.scrollHeight;
+    return div;
+  }
+
+  function updateFileProgress(id, receivedOrSent, size){
+    const div = $("file-" + id);
+    if(!div) return;
+    const pct = size ? Math.min(100, Math.round((receivedOrSent / size) * 100)) : 0;
+    div.querySelector('[data-role="bar"]').style.width = pct + "%";
+    div.querySelector('[data-role="meta"]').textContent = humanSize(size) + " · " + pct + "%";
+  }
+
+  function completeFileMsg(id, blob, name, mime){
+    const div = $("file-" + id);
+    if(!div) return;
+    div.querySelector('[data-role="meta"]').textContent = humanSize(blob.size) + " · 完了";
+    div.querySelector('[data-role="bar"]').style.width = "100%";
+    const url = URL.createObjectURL(blob);
+    const extra = div.querySelector('[data-role="extra"]');
+    if(mime && mime.startsWith("image/")){
+      extra.innerHTML = '<img class="file-img" src="' + url + '">' +
+        '<br><a class="file-link" href="' + url + '" download="' + name.replace(/"/g,"") + '">保存</a>';
+    } else {
+      extra.innerHTML = '<a class="file-link" href="' + url + '" download="' + name.replace(/"/g,"") + '">保存</a>';
+    }
+  }
+
+  function beginIncomingFile(msg){
+    incomingFiles[msg.id] = { name: msg.name, size: msg.size, mime: msg.mime, received: 0, chunks: [] };
+    addFileMsg(msg.id, msg.name, msg.size, "peer");
+    dlog("受信開始: " + msg.name + " (" + humanSize(msg.size) + ")");
+  }
+
+  function handleIncomingChunk(buf){
+    const ids = Object.keys(incomingFiles);
+    if(ids.length === 0) return;
+    const id = ids[ids.length - 1];
+    const f = incomingFiles[id];
+    f.chunks.push(buf);
+    f.received += buf.byteLength;
+    updateFileProgress(id, f.received, f.size);
+  }
+
+  function finishIncomingFile(id){
+    const f = incomingFiles[id];
+    if(!f) return;
+    const blob = new Blob(f.chunks, { type: f.mime || "application/octet-stream" });
+    completeFileMsg(id, blob, f.name, f.mime);
+    dlog("受信完了: " + f.name);
+    delete incomingFiles[id];
+  }
+
+  function waitForBufferedAmountLow(){
+    return new Promise(resolve => {
+      if(dc.bufferedAmount <= BUFFERED_AMOUNT_LOW){ resolve(); return; }
+      dc.bufferedAmountLowThreshold = BUFFERED_AMOUNT_LOW;
+      const onLow = () => { dc.removeEventListener("bufferedamountlow", onLow); resolve(); };
+      dc.addEventListener("bufferedamountlow", onLow);
+    });
+  }
+
+  async function sendFile(file){
+    if(!dc || dc.readyState !== "open"){ addSysMsg("接続されていないため送信できません"); return; }
+    const id = "f" + Date.now() + Math.random().toString(36).slice(2,7);
+    addFileMsg(id, file.name, file.size, "me");
+    sendControl({ k: "file-start", id, name: file.name, size: file.size, mime: file.type });
+    let offset = 0;
+    while(offset < file.size){
+      if(dc.bufferedAmount > BUFFERED_AMOUNT_HIGH) await waitForBufferedAmountLow();
+      const slice = file.slice(offset, offset + CHUNK_SIZE);
+      const buf = await slice.arrayBuffer();
+      dc.send(buf);
+      offset += buf.byteLength;
+      updateFileProgress(id, offset, file.size);
+    }
+    sendControl({ k: "file-end", id });
+    const div = $("file-" + id);
+    if(div){
+      const url = URL.createObjectURL(file);
+      const extra = div.querySelector('[data-role="extra"]');
+      if(file.type && file.type.startsWith("image/")){
+        extra.innerHTML = '<img class="file-img" src="' + url + '">';
+      }
+    }
+    dlog("送信完了: " + file.name);
+  }
+
+  $("fileBtn").onclick = () => $("fileInput").click();
+  $("fileInput").onchange = () => {
+    const files = Array.from($("fileInput").files || []);
+    $("fileInput").value = "";
+    files.forEach(f => {
+      fileSendQueue = fileSendQueue.then(() => sendFile(f));
+    });
+  };
 
   // role select
   $("roleHost").onclick = () => {
@@ -629,17 +888,98 @@
     const input = $("msgInput");
     const text = input.value.trim();
     if(!text || !dc || dc.readyState !== "open") return;
-    dc.send(text);
+    sendControl({ k: "msg", text });
     addMsg(text, "me");
     input.value = "";
   }
   $("sendBtn").onclick = send;
   $("msgInput").addEventListener("keydown", e => { if(e.key === "Enter") send(); });
 
+  // ---- voice call ----
+  let localAudioStream = null;
+  let inCall = false;
+
+  function showCallBar(show){
+    inCall = show;
+    $("callBar").classList.toggle("show", show);
+    $("callBtn").textContent = show ? "📞 通話中" : "📞 通話開始";
+    $("callBtn").classList.toggle("active", show);
+  }
+
+  async function startCall(){
+    if(!pc || !dc || dc.readyState !== "open"){ addSysMsg("接続されていないため通話できません"); return; }
+    try{
+      dlog("マイクへのアクセスを要求中…");
+      localAudioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      localAudioStream.getTracks().forEach(t => pc.addTrack(t, localAudioStream));
+      dlog("マイク取得成功、通話を開始します");
+      addSysMsg("通話を開始しました");
+      showCallBar(true);
+    }catch(e){
+      dlog("マイク取得エラー: " + e.message);
+      addSysMsg("マイクへのアクセスが許可されませんでした");
+    }
+  }
+
+  function endCall(notifyPeer){
+    if(localAudioStream){
+      localAudioStream.getTracks().forEach(t => { t.stop(); });
+      localAudioStream = null;
+    }
+    const audioEl = $("remoteAudio");
+    if(audioEl) audioEl.srcObject = null;
+    showCallBar(false);
+    $("muteBtn").textContent = "ミュート";
+    if(notifyPeer) sendControl({ k: "call-end" });
+    addSysMsg("通話を終了しました");
+  }
+
+  $("callBtn").onclick = () => { if(inCall){ endCall(true); } else { startCall(); } };
+  $("hangupBtn").onclick = () => endCall(true);
+  $("muteBtn").onclick = () => {
+    if(!localAudioStream) return;
+    const track = localAudioStream.getAudioTracks()[0];
+    if(!track) return;
+    track.enabled = !track.enabled;
+    $("muteBtn").textContent = track.enabled ? "ミュート" : "ミュート解除";
+  };
+
+  // ---- voice input (dictation) ----
+  const SpeechRecognitionImpl = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if(SpeechRecognitionImpl){
+    const recog = new SpeechRecognitionImpl();
+    recog.lang = "ja-JP";
+    recog.interimResults = false;
+    recog.continuous = false;
+    let listening = false;
+    recog.onresult = (e) => {
+      const text = Array.from(e.results).map(r => r[0].transcript).join("");
+      const input = $("msgInput");
+      input.value = (input.value ? input.value + " " : "") + text;
+    };
+    recog.onerror = (e) => dlog("音声入力エラー: " + e.error);
+    recog.onend = () => { listening = false; $("micBtn").classList.remove("rec"); };
+    $("micBtn").onclick = () => {
+      if(listening){ recog.stop(); return; }
+      try{
+        recog.start();
+        listening = true;
+        $("micBtn").classList.add("rec");
+      }catch(e){ dlog("音声入力開始エラー: " + e.message); }
+    };
+  } else {
+    $("micBtn").disabled = true;
+    $("micBtn").title = "このブラウザは音声入力に対応していません";
+  }
+
+  // role select
+
   // reset
   $("resetBtn").onclick = () => {
+    if(inCall) endCall(false);
     if(pc){ pc.close(); pc = null; }
     dc = null;
+    Object.keys(incomingFiles).forEach(k => delete incomingFiles[k]);
     ["hostOfferOut","hostAnswerIn","joinOfferIn","joinAnswerOut","msgInput"].forEach(id=>{ $(id).value=""; });
     $("chatLog").innerHTML = "";
     $("debugLog").value = "";
