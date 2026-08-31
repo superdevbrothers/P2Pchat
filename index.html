@@ -301,7 +301,7 @@
   <!-- HOST FLOW -->
   <div class="card" id="hostStep1" style="display:none;">
     <div class="step-num">STEP 1</div>
-    <div class="step-title">招待コードを作成</div>
+    <div class="step-title">招待コードを作成 <span style="font-family:var(--mono);font-size:10px;color:var(--signal);border:1px solid var(--signal-dim);border-radius:4px;padding:2px 6px;vertical-align:middle;">OFFER</span></div>
     <div class="step-desc">下のボタンでコードを生成し、コピーして相手に送ってください(LINE・メールなど何でもOK)。</div>
     <textarea id="hostOfferOut" readonly placeholder="ここに招待コードが表示されます…"></textarea>
     <div class="row">
@@ -313,7 +313,7 @@
 
   <div class="card" id="hostStep2" style="display:none;">
     <div class="step-num">STEP 2</div>
-    <div class="step-title">相手からの応答コードを貼り付け</div>
+    <div class="step-title">相手からの応答コードを貼り付け <span style="font-family:var(--mono);font-size:10px;color:var(--pending);border:1px solid var(--pending-dim);border-radius:4px;padding:2px 6px;vertical-align:middle;">ANSWER待ち</span></div>
     <div class="step-desc">相手が生成した応答コードを受け取ったら、ここに貼り付けて接続します。</div>
     <textarea id="hostAnswerIn" placeholder="相手の応答コードをここに貼り付け…"></textarea>
     <div class="row">
@@ -325,7 +325,7 @@
   <!-- JOIN FLOW -->
   <div class="card" id="joinStep1" style="display:none;">
     <div class="step-num">STEP 1</div>
-    <div class="step-title">招待コードを貼り付け</div>
+    <div class="step-title">招待コードを貼り付け <span style="font-family:var(--mono);font-size:10px;color:var(--signal);border:1px solid var(--signal-dim);border-radius:4px;padding:2px 6px;vertical-align:middle;">OFFER待ち</span></div>
     <div class="step-desc">相手からもらった招待コードをここに貼り付けてください。</div>
     <textarea id="joinOfferIn" placeholder="招待コードをここに貼り付け…"></textarea>
     <div class="row">
@@ -336,7 +336,7 @@
 
   <div class="card" id="joinStep2" style="display:none;">
     <div class="step-num">STEP 2</div>
-    <div class="step-title">応答コードを相手に送る</div>
+    <div class="step-title">応答コードを相手に送る <span style="font-family:var(--mono);font-size:10px;color:var(--pending);border:1px solid var(--pending-dim);border-radius:4px;padding:2px 6px;vertical-align:middle;">ANSWER</span></div>
     <div class="step-desc">このコードをコピーして相手に送ってください。相手が貼り付ければ自動的に接続されます。</div>
     <textarea id="joinAnswerOut" readonly placeholder="ここに応答コードが表示されます…"></textarea>
     <div class="row">
@@ -439,11 +439,40 @@
     }, 80);
   }
 
-  function encode(obj){
-    return btoa(unescape(encodeURIComponent(JSON.stringify(obj))));
+  async function encode(obj, tag){
+    const json = JSON.stringify(obj);
+    const bytes = new TextEncoder().encode(json);
+    let payload = bytes;
+    try{
+      const cs = new CompressionStream("deflate-raw");
+      const stream = new Blob([bytes]).stream().pipeThrough(cs);
+      payload = new Uint8Array(await new Response(stream).arrayBuffer());
+    }catch(e){
+      dlog("圧縮未対応のためそのまま符号化: " + e.message);
+    }
+    let binary = "";
+    payload.forEach(b => { binary += String.fromCharCode(b); });
+    const b64 = btoa(binary);
+    return (tag ? tag + ":" : "") + b64;
   }
-  function decode(str){
-    return JSON.parse(decodeURIComponent(escape(atob(str.trim()))));
+  async function decode(str){
+    let s = str.trim();
+    const idx = s.indexOf(":");
+    if(idx > 0 && idx <= 8 && /^[A-Z]+$/.test(s.slice(0, idx))){
+      s = s.slice(idx + 1).trim();
+    }
+    const binary = atob(s);
+    const bytes = new Uint8Array(binary.length);
+    for(let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    try{
+      const ds = new DecompressionStream("deflate-raw");
+      const stream = new Blob([bytes]).stream().pipeThrough(ds);
+      const out = new Uint8Array(await new Response(stream).arrayBuffer());
+      return JSON.parse(new TextDecoder().decode(out));
+    }catch(e){
+      // 圧縮なしで作られた古い形式のコードへのフォールバック
+      return JSON.parse(new TextDecoder().decode(bytes));
+    }
   }
 
   function waitIceComplete(pc, maxWaitMs){
@@ -799,7 +828,7 @@
     await waitIceComplete(pc);
     const types = (pc.localDescription.sdp.match(/typ \w+/g) || []);
     dlog("ICE収集終了(iceGatheringState=" + pc.iceGatheringState + ")。候補種別: " + (types.length ? types.join(", ") : "なし(要注意)"));
-    $("hostOfferOut").value = encode(pc.localDescription);
+    $("hostOfferOut").value = await encode(pc.localDescription, "OFFER");
     $("hostCopyBtn").disabled = false;
     $("hostGenHint").textContent = "上のコードをコピーして相手に送ってください。";
     showOnly(["hostStep1","hostStep2"]);
@@ -831,7 +860,7 @@
     const val = $("hostAnswerIn").value;
     if(!val.trim()){ $("hostConnectHint").textContent = "応答コードを貼り付けてください。"; return; }
     try{
-      const answer = decode(val);
+      const answer = await decode(val);
       dlog("応答コードを解析しました。type=" + answer.type);
       if(answer.type !== "answer"){
         dlog("⚠ 貼り付けられたのは type=" + answer.type + " です。応答コード(answer)ではありません。");
@@ -853,7 +882,7 @@
     if(!val.trim()){ $("joinGenHint").textContent = "招待コードを貼り付けてください。"; return; }
     $("joinGenBtn").disabled = true;
     try{
-      const offer = decode(val);
+      const offer = await decode(val);
       dlog("招待コードを解析しました。type=" + offer.type);
       if(offer.type !== "offer"){
         dlog("⚠ 貼り付けられたのは type=" + offer.type + " です。招待コード(offer)ではありません。");
@@ -871,7 +900,7 @@
       await waitIceComplete(pc);
       const types = (pc.localDescription.sdp.match(/typ \w+/g) || []);
       dlog("ICE収集終了(iceGatheringState=" + pc.iceGatheringState + ")。候補種別: " + (types.length ? types.join(", ") : "なし(要注意)"));
-      $("joinAnswerOut").value = encode(pc.localDescription);
+      $("joinAnswerOut").value = await encode(pc.localDescription, "ANSWER");
       setStatus("pending", "応答コードを相手に送ってください");
       showOnly(["joinStep2"]);
       scrollToStep("joinStep2");
