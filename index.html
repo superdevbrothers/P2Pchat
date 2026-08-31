@@ -179,6 +179,8 @@
 
   .hint{font-size:11.5px;color:var(--text-dim);margin-top:8px;line-height:1.6;}
   .hint.warn{color:var(--pending);}
+  .hint.error{color:var(--danger);}
+  .hint.success{color:var(--signal);}
 
   /* chat */
   .chat-card{padding:0;overflow:hidden;}
@@ -301,14 +303,19 @@
   <!-- HOST FLOW -->
   <div class="card" id="hostStep1" style="display:none;">
     <div class="step-num">STEP 1</div>
-    <div class="step-title">招待コードを作成 <span style="font-family:var(--mono);font-size:10px;color:var(--signal);border:1px solid var(--signal-dim);border-radius:4px;padding:2px 6px;vertical-align:middle;">OFFER</span></div>
-    <div class="step-desc">下のボタンでコードを生成し、コピーして相手に送ってください(LINE・メールなど何でもOK)。</div>
+    <div class="step-title">招待コード・リンクを作成 <span style="font-family:var(--mono);font-size:10px;color:var(--signal);border:1px solid var(--signal-dim);border-radius:4px;padding:2px 6px;vertical-align:middle;">OFFER</span></div>
+    <div class="step-desc">下のボタンでコードと招待リンクを生成し、どちらか一方を相手に送ってください(LINE・メールなど何でもOK)。</div>
     <textarea id="hostOfferOut" readonly placeholder="ここに招待コードが表示されます…"></textarea>
     <div class="row">
       <button class="btn primary" id="hostGenBtn">招待コードを作成</button>
-      <button class="btn ghost" id="hostCopyBtn" disabled>コピー</button>
+      <button class="btn ghost" id="hostCopyBtn" disabled>コードをコピー</button>
     </div>
-    <div class="hint" id="hostGenHint"></div>
+    <div class="step-desc" style="margin:16px 0 8px;">または招待リンクを送る</div>
+    <textarea id="hostInviteOut" readonly placeholder="招待リンクはコード作成後に表示されます…" aria-label="招待リンク"></textarea>
+    <div class="row">
+      <button class="btn ghost" id="hostInviteCopyBtn" disabled>リンクをコピー</button>
+    </div>
+    <div class="hint" id="hostGenHint" role="status" aria-live="polite"></div>
   </div>
 
   <div class="card" id="hostStep2" style="display:none;">
@@ -319,19 +326,19 @@
     <div class="row">
       <button class="btn primary" id="hostConnectBtn">接続する</button>
     </div>
-    <div class="hint" id="hostConnectHint"></div>
+    <div class="hint" id="hostConnectHint" role="alert" aria-live="assertive"></div>
   </div>
 
   <!-- JOIN FLOW -->
   <div class="card" id="joinStep1" style="display:none;">
     <div class="step-num">STEP 1</div>
-    <div class="step-title">招待コードを貼り付け <span style="font-family:var(--mono);font-size:10px;color:var(--signal);border:1px solid var(--signal-dim);border-radius:4px;padding:2px 6px;vertical-align:middle;">OFFER待ち</span></div>
-    <div class="step-desc">相手からもらった招待コードをここに貼り付けてください。</div>
-    <textarea id="joinOfferIn" placeholder="招待コードをここに貼り付け…"></textarea>
+    <div class="step-title">招待コード・リンクを貼り付け <span style="font-family:var(--mono);font-size:10px;color:var(--signal);border:1px solid var(--signal-dim);border-radius:4px;padding:2px 6px;vertical-align:middle;">OFFER待ち</span></div>
+    <div class="step-desc">相手からもらった招待コードまたは招待リンクを、途中で省略せずに貼り付けてください。</div>
+    <textarea id="joinOfferIn" placeholder="招待コードまたは招待リンクをここに貼り付け…"></textarea>
     <div class="row">
       <button class="btn primary" id="joinGenBtn">応答コードを作成</button>
     </div>
-    <div class="hint" id="joinGenHint"></div>
+    <div class="hint" id="joinGenHint" role="alert" aria-live="assertive"></div>
   </div>
 
   <div class="card" id="joinStep2" style="display:none;">
@@ -475,6 +482,90 @@
     }
   }
 
+  // 招待コード単体と #invite=... 形式の招待リンクの両方を受け付けます。
+  // 改行・不可視文字は、メッセージアプリでの折り返しやコピー時の混入を想定して除去します。
+  function getInviteValue(input){
+    const raw = String(input || "").trim();
+    if(!raw) throw new Error("empty");
+
+    const compact = raw.replace(/[\u200B-\u200D\uFEFF]/g, "");
+    if(/^(?:OFFER|ANSWER):/i.test(compact)){
+      return compact.replace(/\s+/g, "");
+    }
+
+    const looksLikeUrl = /^(?:https?:\/\/|file:\/\/)/i.test(compact);
+    if(!looksLikeUrl) return compact.replace(/\s+/g, "");
+
+    let url;
+    try{
+      url = new URL(compact);
+    }catch(e){
+      throw new Error("invalid-link");
+    }
+
+    // URLSearchParams は「+」を空白として扱うため、エンコード済みの値を手動で取得します。
+    const findParam = source => {
+      if(!source) return null;
+      const part = source.replace(/^[?#]/, "");
+      for(const item of part.split("&")){
+        const eq = item.indexOf("=");
+        const key = eq >= 0 ? item.slice(0, eq) : item;
+        const value = eq >= 0 ? item.slice(eq + 1) : "";
+        if(["invite", "offer", "code"].includes(key.toLowerCase())){
+          try{ return decodeURIComponent(value); }catch(e){ throw new Error("invalid-link"); }
+        }
+      }
+      return null;
+    };
+
+    const fromHash = findParam(url.hash);
+    const fromQuery = findParam(url.search);
+    const value = fromHash || fromQuery;
+    if(!value) throw new Error("invalid-link");
+    return value.replace(/[\s\u200B-\u200D\uFEFF]/g, "");
+  }
+
+  function validateEncodedInvite(value){
+    const labelMatch = value.match(/^([A-Z]+):/i);
+    const label = labelMatch ? labelMatch[1].toUpperCase() : "";
+    const payload = labelMatch ? value.slice(labelMatch[0].length) : value;
+    const normalised = payload.replace(/-/g, "+").replace(/_/g, "/");
+    if(!normalised || !/^[A-Za-z0-9+/]*={0,2}$/.test(normalised) || normalised.length % 4 === 1){
+      throw new Error("invalid-code");
+    }
+    if(normalised.indexOf("=") >= 0 && !/=+$/.test(normalised)) throw new Error("invalid-code");
+    return (label ? label + ":" : "") + normalised;
+  }
+
+  function validateDescription(description, expectedType){
+    if(!description || description.type !== expectedType || typeof description.sdp !== "string" || !description.sdp.startsWith("v=0") || !description.sdp.includes("m=application")){
+      throw new Error("invalid-description");
+    }
+    return description;
+  }
+
+  async function decodeInvite(input, expectedType){
+    const value = validateEncodedInvite(getInviteValue(input));
+    const description = await decode(value);
+    return validateDescription(description, expectedType);
+  }
+
+  function inviteErrorText(error, expectedType, input){
+    const role = expectedType === "offer" ? "招待" : "応答";
+    const isLink = /^(?:https?:\/\/|file:\/\/)/i.test(String(input || "").trim());
+    if(error && error.message === "empty") return role + "コードまたは招待リンクを貼り付けてください。";
+    if(error && (error.message === "invalid-link" || (isLink && ["invalid-code", "invalid-description"].includes(error.message)))){
+      return "招待リンクが無効、または誤字脱字・省略があります。リンク全体をコピーし直し、「invite=」以降が欠けていないか確認してください。";
+    }
+    if(error && ["invalid-code", "invalid-description"].includes(error.message)) return role + "コードが無効、または途中で変更・省略されています。相手に作成直後のコードまたは招待リンクを再送してもらってください。";
+    return role + "コードを読み取れませんでした。コピー時に文字が欠けていないか確認してください。";
+  }
+
+  function makeInviteLink(code){
+    if(!/^https?:$/.test(location.protocol)) return "";
+    return location.href.split("#")[0] + "#invite=" + encodeURIComponent(code);
+  }
+
   function waitIceComplete(pc, maxWaitMs){
     maxWaitMs = maxWaitMs || 8000;
     return new Promise(resolve=>{
@@ -589,7 +680,12 @@
           });
           dlog("採用された経路: local=" + localType + " / remote=" + remoteType + (localType === "relay" || remoteType === "relay" ? "(TURN中継経由)" : "(直接P2P)"));
         }).catch(()=>{});
-      } else if(["disconnected","failed","closed"].includes(conn.connectionState)){
+      } else if(conn.connectionState === "failed"){
+        setStatus("", "接続できませんでした — <b>招待情報が古い・無効、またはネットワーク設定の可能性</b>があります");
+        const activeHint = $("hostStep2").style.display !== "none" ? $("hostConnectHint") : $("joinGenHint");
+        activeHint.className = "hint error";
+        activeHint.textContent = "接続に失敗しました。相手がページをやり直した、または招待情報が途中で変わった場合は、以前のコード・リンクは使えません。双方で「最初からやり直す」を押し、新しい招待コードまたは招待リンクを作成してください。";
+      } else if(["disconnected","closed"].includes(conn.connectionState)){
         setStatus("", "接続が切断されました");
       }
     };
@@ -828,9 +924,16 @@
     await waitIceComplete(pc);
     const types = (pc.localDescription.sdp.match(/typ \w+/g) || []);
     dlog("ICE収集終了(iceGatheringState=" + pc.iceGatheringState + ")。候補種別: " + (types.length ? types.join(", ") : "なし(要注意)"));
-    $("hostOfferOut").value = await encode(pc.localDescription, "OFFER");
+    const inviteCode = await encode(pc.localDescription, "OFFER");
+    $("hostOfferOut").value = inviteCode;
     $("hostCopyBtn").disabled = false;
-    $("hostGenHint").textContent = "上のコードをコピーして相手に送ってください。";
+    const inviteLink = makeInviteLink(inviteCode);
+    $("hostInviteOut").value = inviteLink;
+    $("hostInviteCopyBtn").disabled = !inviteLink;
+    $("hostGenHint").className = "hint success";
+    $("hostGenHint").textContent = inviteLink
+      ? "コードまたは招待リンクのどちらか一方を、途中で改行・省略せずに相手へ送ってください。"
+      : "このページをWebサイトとして開くと招待リンクも作成できます。今は上のコードをコピーして相手に送ってください。";
     showOnly(["hostStep1","hostStep2"]);
     scrollToStep("hostStep2");
   };
@@ -856,40 +959,48 @@
     document.body.removeChild(ta);
   }
   $("hostCopyBtn").onclick = () => copyText($("hostOfferOut").value, $("hostCopyBtn"));
+  $("hostInviteCopyBtn").onclick = () => copyText($("hostInviteOut").value, $("hostInviteCopyBtn"));
   $("hostConnectBtn").onclick = async () => {
     const val = $("hostAnswerIn").value;
-    if(!val.trim()){ $("hostConnectHint").textContent = "応答コードを貼り付けてください。"; return; }
+    const hint = $("hostConnectHint");
+    hint.className = "hint";
+    if(!pc){
+      hint.className = "hint error";
+      hint.textContent = "先に招待コードを作成してください。";
+      return;
+    }
     try{
-      const answer = await decode(val);
+      const answer = await decodeInvite(val, "answer");
       dlog("応答コードを解析しました。type=" + answer.type);
-      if(answer.type !== "answer"){
-        dlog("⚠ 貼り付けられたのは type=" + answer.type + " です。応答コード(answer)ではありません。");
-        $("hostConnectHint").textContent = "これは招待コード(自分が作ったもの)のようです。相手が「応答コードを作成」で生成した、別のコードを貼り付けてください。";
-        return;
-      }
       await pc.setRemoteDescription(answer);
       dlog("リモートSDP(answer)設定完了。ICE接続確立を待ちます。");
-      $("hostConnectHint").textContent = "接続を確立しています…";
+      hint.className = "hint success";
+      hint.textContent = "コードを確認しました。接続を確立しています…";
     }catch(e){
-      dlog("setRemoteDescription エラー: " + e.message);
-      $("hostConnectHint").textContent = "コードが正しくないようです。もう一度確認してください。";
+      dlog("応答コードの検証または接続エラー: " + e.message);
+      hint.className = "hint error";
+      if(e && e.message === "invalid-description" && !/^(?:https?:\/\/|file:\/\/)/i.test(val.trim())){
+        hint.textContent = "これは応答コードではなく、招待コードの可能性があります。相手が「応答コードを作成」で生成したコードを貼り付けてください。";
+      }else{
+        hint.textContent = inviteErrorText(e, "answer", val);
+      }
     }
   };
 
   // JOIN: receive offer, generate answer
   $("joinGenBtn").onclick = async () => {
     const val = $("joinOfferIn").value;
-    if(!val.trim()){ $("joinGenHint").textContent = "招待コードを貼り付けてください。"; return; }
+    const hint = $("joinGenHint");
+    hint.className = "hint";
+    if(!val.trim()){
+      hint.className = "hint error";
+      hint.textContent = "招待コードまたは招待リンクを貼り付けてください。";
+      return;
+    }
     $("joinGenBtn").disabled = true;
     try{
-      const offer = await decode(val);
+      const offer = await decodeInvite(val, "offer");
       dlog("招待コードを解析しました。type=" + offer.type);
-      if(offer.type !== "offer"){
-        dlog("⚠ 貼り付けられたのは type=" + offer.type + " です。招待コード(offer)ではありません。");
-        $("joinGenHint").textContent = "これは招待コードではないようです。相手が「招待コードを作成」で生成したコードを貼り付けてください。";
-        $("joinGenBtn").disabled = false;
-        return;
-      }
       pc = makePC(await getIceServers());
       pc.ondatachannel = (e) => { dlog("データチャネル受信"); setupDataChannel(e.channel); };
       await pc.setRemoteDescription(offer);
@@ -901,16 +1012,44 @@
       const types = (pc.localDescription.sdp.match(/typ \w+/g) || []);
       dlog("ICE収集終了(iceGatheringState=" + pc.iceGatheringState + ")。候補種別: " + (types.length ? types.join(", ") : "なし(要注意)"));
       $("joinAnswerOut").value = await encode(pc.localDescription, "ANSWER");
+      hint.className = "hint success";
+      hint.textContent = "招待コードを確認しました。応答コードを相手に送ってください。";
       setStatus("pending", "応答コードを相手に送ってください");
       showOnly(["joinStep2"]);
       scrollToStep("joinStep2");
     }catch(e){
       dlog("応答コード作成エラー: " + e.message);
-      $("joinGenHint").textContent = "コードが正しくないようです。もう一度確認してください。";
+      hint.className = "hint error";
+      if(e && e.message === "invalid-description" && !/^(?:https?:\/\/|file:\/\/)/i.test(val.trim())){
+        hint.textContent = "これは招待コードではなく、相手用の応答コードの可能性があります。相手が「招待コードを作成」で生成したコードを貼り付けてください。";
+      }else{
+        hint.textContent = inviteErrorText(e, "offer", val);
+      }
       $("joinGenBtn").disabled = false;
     }
   };
   $("joinCopyBtn").onclick = () => copyText($("joinAnswerOut").value, $("joinCopyBtn"));
+
+  // ハッシュ付き招待リンクで開かれた場合は、入力欄へ自動入力して誤りもその場で通知します。
+  (async function loadInviteFromLink(){
+    if(!location.hash || !/^#(?:invite|offer|code)=/i.test(location.hash)) return;
+    const hint = $("joinGenHint");
+    showOnly(["joinStep1"]);
+    try{
+      const value = getInviteValue(location.href);
+      await decodeInvite(value, "offer");
+      $("joinOfferIn").value = value;
+      setStatus("pending", "招待リンクを確認しました。応答コードを作成してください");
+      hint.className = "hint success";
+      hint.textContent = "招待リンクを確認しました。「応答コードを作成」を押して続けてください。";
+      scrollToStep("joinStep1");
+    }catch(e){
+      setStatus("", "招待リンクを確認できませんでした");
+      hint.className = "hint error";
+      hint.textContent = inviteErrorText(e, "offer", location.href);
+      scrollToStep("joinStep1");
+    }
+  })();
 
   // chat send
   function send(){
@@ -1009,13 +1148,17 @@
     if(pc){ pc.close(); pc = null; }
     dc = null;
     Object.keys(incomingFiles).forEach(k => delete incomingFiles[k]);
-    ["hostOfferOut","hostAnswerIn","joinOfferIn","joinAnswerOut","msgInput"].forEach(id=>{ $(id).value=""; });
+    ["hostOfferOut","hostInviteOut","hostAnswerIn","joinOfferIn","joinAnswerOut","msgInput"].forEach(id=>{ $(id).value=""; });
     $("chatLog").innerHTML = "";
     $("debugLog").value = "";
     $("liveState").textContent = "\u00A0";
     $("hostCopyBtn").disabled = true;
+    $("hostInviteCopyBtn").disabled = true;
     $("hostGenBtn").disabled = false;
     $("joinGenBtn").disabled = false;
+    $("hostGenHint").className = "hint";
+    $("hostConnectHint").className = "hint";
+    $("joinGenHint").className = "hint";
     $("hostGenHint").textContent = "";
     $("hostConnectHint").textContent = "";
     $("joinGenHint").textContent = "";
